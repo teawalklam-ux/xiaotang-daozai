@@ -902,6 +902,7 @@ impl App {
 
     // ================= 待办 =================
     pub(crate) fn page_todo(&mut self, c: &Card, env: &Env, _cmds: &mut Vec<Cmd>) {
+        if self.ms_todo_view { self.page_microsoft_todo(c); return; }
         // 今天未完成优先，已完成沉底；不在今天的重复待办变暗显示、不能勾选。
         let (done, total) = self.todos.progress(&env.today);
         let order = self.todos.display_order(&env.today);
@@ -911,6 +912,14 @@ impl App {
         let w = hc.text(42.0, 61.0, &format!("{done}"), size::HERO, W::Bold, if done > 0 && done == total { theme::GREEN } else { theme::WHITE }, H::Left);
         hc.text(42.0 + w, 61.0, &format!("/{total}"), size::HERO, W::Bold, theme::WHITE, H::Left);
         c.text(42.0, 78.0, "已完成", size::SMALL, W::Regular, theme::GRAY, H::Left);
+        if !self.adding && self.editing.is_none() && !self.todo_choosing {
+            let label = if self.ms_todo.task_count() == 0 { "微软".to_string() } else { format!("微软 {}", self.ms_todo.task_count()) };
+            let width = c.text(96.0, 78.0, &label, size::SMALL, W::Regular, theme::BLUE, H::Left);
+            if c.hit(94.0, 66.0, width + 8.0, 16.0, "todo-ms").on_hover_text("查看 Microsoft To Do 的未完成任务，只读").clicked() {
+                self.ms_todo_view = true;
+                self.ms_todo_first = 0;
+            }
+        }
 
         let (add, ac) = capsule(c, 41.0, 96.0, 74.0, 26.0, "t-add", theme::BTN, theme::BTN_HOVER);
         paint::plus(&ac, 56.0, 109.0, 6.2, theme::WHITE, Color32::BLACK);
@@ -1045,6 +1054,51 @@ impl App {
                 self.buf = self.todos.items[i].text.clone();
                 self.todo_input_focused=false;
             }else{self.todo_choosing=!self.todo_choosing;if self.todo_choosing{self.pending.push(Cmd::Focus);}}
+        }
+    }
+
+    /// Microsoft To Do 只读视图。不勾选、不编辑、不删除，本机待办保持原样。
+    fn page_microsoft_todo(&mut self, c: &Card) {
+        let count = self.ms_todo.task_count();
+        let headline = if count == 0 && !self.ms_todo.signed_in() { "—".into() } else { count.to_string() };
+        c.text(42.0, 61.0, &headline, size::HERO, W::Bold, theme::WHITE, H::Left);
+        c.text(42.0, 78.0, self.ms_todo.subtitle(), size::SMALL, W::Regular, theme::GRAY, H::Left);
+        let (back, back_card) = capsule(c, 41.0, 96.0, 68.0, 26.0, "ms-back", theme::BTN, theme::BTN_HOVER);
+        back_card.text(75.0, 112.5, "本机", size::BODY, W::Regular, theme::WHITE, H::Center);
+        let can_refresh = self.ms_todo.signed_in() && !self.ms_todo.busy();
+        let refresh_card = if can_refresh { c.clone() } else { c.faded(0.45) };
+        let (refresh, refresh_ui) = capsule(&refresh_card, 115.0, 96.0, 68.0, 26.0, "ms-refresh", theme::BTN, if can_refresh { theme::BTN_HOVER } else { theme::BTN });
+        refresh_ui.text(149.0, 112.5, if self.ms_todo.busy() { "读取" } else { "刷新" }, size::BODY, W::Regular, theme::WHITE, H::Center);
+        c.fill(196.0, 31.0, 181.0, 93.0, 12.0, theme::CARD);
+        if count == 0 {
+            c.text(286.5, 68.0, if self.ms_todo.signed_in() { "没有未完成任务" } else { "尚未连接" }, size::BODY, W::Regular, theme::WHITE, H::Center);
+            c.text(286.5, 88.0, "设置 → 待办", size::TINY, W::Regular, theme::GRAY, H::Center);
+            let (setup, setup_ui) = capsule(c, 246.0, 98.0, 80.0, 22.0, "ms-setup", theme::BTN, theme::BTN_HOVER);
+            setup_ui.text(286.0, 112.5, "去连接", size::TINY, W::Regular, theme::WHITE, H::Center);
+            if setup.clicked() { self.settings_tab = 4; self.open_settings(); }
+        } else {
+            let start = self.ms_todo_first.min(count.saturating_sub(1));
+            let visible: Vec<_> = self.ms_todo.rows().iter().skip(start).take(3).cloned().collect();
+            for (shown, task) in visible.iter().enumerate() {
+                let y = 46.0 + shown as f32 * 22.0;
+                let row = c.hit(202.0, y - 10.0, 169.0, 20.0, ("ms-todo", start + shown));
+                if c.hover_t(&row).0 > 0.01 { c.fill(202.0, y - 10.0, 169.0, 20.0, 7.0, Color32::from_white_alpha(12)); }
+                c.circle(212.0, y, 2.4, theme::BLUE);
+                let due_width = if task.due.is_empty() { 0.0 } else { c.text_w(&task.due, size::TINY, W::Regular) + 6.0 };
+                let title = c.fit(&task.title, size::BODY, W::Regular, 128.0 - due_width);
+                c.text(223.0, y + 3.8, &title, size::BODY, W::Regular, Color32::from_gray(235), H::Left);
+                if !task.due.is_empty() { c.text(366.0, y + 3.2, &task.due, size::TINY, W::Regular, theme::BLUE, H::Right); }
+                row.clone().on_hover_text(&task.hover);
+                if row.clicked() { self.say("只读，请到 Microsoft To Do 或 Outlook 修改"); }
+            }
+            let rest = count.saturating_sub(start + visible.len());
+            let caption = if rest > 0 { format!("共 {count} 项 · 滚轮") } else { self.ms_todo.caption() };
+            c.text(370.0, 120.0, &caption, size::TINY, W::Regular, theme::DIM, H::Right);
+        }
+        if back.clicked() { self.ms_todo_view = false; }
+        if refresh.clicked() {
+            if let Err(error) = self.ms_todo_refresh() { self.say(error); }
+            else { self.say("正在读取 Microsoft 待办"); }
         }
     }
 

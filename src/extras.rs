@@ -1677,6 +1677,7 @@ impl App {
                             ui.add_space(5.0);
                             if ui.add_sized([120.0,32.0],egui::Button::new("打开待办页")).clicked(){self.settings_open=false;self.show_page(4);}
                         });
+                        self.ms_todo_settings(ui);
                     }
                     5=>{
                         settings_label(ui,"置物架");

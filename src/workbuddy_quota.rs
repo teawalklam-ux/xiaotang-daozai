@@ -214,6 +214,7 @@ impl Connect {
     }
     #[test]
     #[ignore="手动验证默认浏览器官网登录，需用户完成登录"]
+    #[cfg(windows)]
     fn workbuddy_login_without_extension(){
         let config=super::super::Config::load();
         let expected=config.accounts.iter().find(|a|a.enabled&&a.provider==super::super::Provider::WorkBuddy).and_then(|a|a.slot.as_deref());
@@ -229,6 +230,7 @@ impl Connect {
     }
     #[test]
     #[ignore="手动验证官网登录续期并保存新会话"]
+    #[cfg(windows)]
     fn workbuddy_refresh_saved_login(){
         let config=super::super::Config::load();
         let a=config.accounts.iter().find(|a|a.enabled&&a.provider==super::super::Provider::WorkBuddy).unwrap();
