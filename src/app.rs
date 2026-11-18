@@ -696,6 +696,9 @@ pub struct App {
     /// 本次运行实际使用兼容渲染（Direct3D 12）；设置里的开关与它不同时提示重启。
     pub render_compat_running: bool,
     pub(crate) todos: model::TodoList,
+    pub(crate) ms_todo: crate::ms_todo::State,
+    pub(crate) ms_todo_view: bool,
+    pub(crate) ms_todo_first: usize,
     pub(crate) water: model::Water,
     pub(crate) shelf: model::Shelf,
 
@@ -891,6 +894,7 @@ impl App {
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
         });
         let settings = model::Settings::load();
+        let ms_todo = crate::ms_todo::State::restore(&settings);
         let clipboard_on = settings.clipboard_history;
         let (bw, bh) = if settings.minimal { (BAR_W_MIN, BAR_H_MIN) } else { (BAR_W, BAR_H) };
         let focus_seconds=settings.focus_minutes as f32*60.0;
@@ -904,6 +908,7 @@ impl App {
             render_compat_running: settings.render_compat,
             settings,
             todos: model::TodoList::load(),
+            ms_todo, ms_todo_view: false, ms_todo_first: 0,
             water: model::Water::default(),
             shelf: model::Shelf::load(),
             w: Spring::new(bw, CLOSE.0, CLOSE.1),
@@ -1787,6 +1792,7 @@ impl App {
         self.fullscreen_hidden=env.fullscreen_hidden;
         self.quota_tick();
         self.weather_tick();
+        self.ms_todo_tick();
         self.current_hour=env.hour();
         self.system_idle=env.idle_seconds;
         self.dt = dt;
@@ -1926,8 +1932,10 @@ impl App {
                         let clipboard_body=clipboard_tab && Rect::from_min_max(Pos2::new(42.0,31.0),Pos2::new(377.0,124.0)).contains(cursor);
                         let list=match self.page {
                             CALENDAR_PAGE if calendar_body=>Some((&mut self.calendar.view.first,calendar_max)),
-                            4 if Rect::from_min_max(Pos2::new(196.0,31.0),Pos2::new(377.0,124.0)).contains(cursor)
-                                =>Some((&mut self.todo_first,self.todos.items.len().saturating_sub(3))),
+                            4 if Rect::from_min_max(Pos2::new(196.0,31.0),Pos2::new(377.0,124.0)).contains(cursor) => {
+                                if self.ms_todo_view { Some((&mut self.ms_todo_first, self.ms_todo.task_count().saturating_sub(3))) }
+                                else { Some((&mut self.todo_first, self.todos.items.len().saturating_sub(3))) }
+                            }
                             3 if clipboard_body
                                 =>Some((&mut self.clip_first,self.clipboard.lock().items.len().saturating_sub(crate::pages::CLIP_ROWS))),
                             3 if !clipboard_tab && Rect::from_min_max(Pos2::new(36.0,28.0),Pos2::new(383.0,128.0)).contains(cursor)
@@ -2198,7 +2206,7 @@ impl App {
             || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some());
         let animating=transitioning || ambient || pet_visible && self.pet.state!=PetState::Sleeping;
         // 交互形变保持 60 帧，媒体 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
-        let repaint_after=std::time::Duration::from_secs_f64(if transitioning{1.0/60.0}else if ambient{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0});
+        let repaint_after=std::time::Duration::from_secs_f64(if transitioning{1.0/60.0}else if ambient{1.0/30.0}else if self.ms_todo.busy(){0.2}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0});
         cmds.append(&mut self.pending);
         FrameOut {
             region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style().visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),

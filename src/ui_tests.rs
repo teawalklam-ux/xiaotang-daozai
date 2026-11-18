@@ -8879,3 +8879,38 @@ fn every_module_settings_tab_maps_to_its_page(){
     }
     pages.sort();assert_eq!(pages,(0..crate::app::PAGE_NAMES.len()).collect::<Vec<_>>(),"每个功能页面各有一个设置分页");
 }
+
+#[test]
+fn microsoft_todo_view_is_read_only_and_local_tasks_still_complete() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    let output=h.ctx.run(Default::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.ms_todo_settings(ui));});
+    let texts=output.shapes.iter().filter_map(|shape|match &shape.shape {egui::Shape::Text(text)=>Some(text.galley.text()),_=>None}).collect::<Vec<_>>();
+    assert!(texts.iter().any(|text|text.contains("不会创建、修改、完成或删除")),"设置应说明只读");
+    assert!(texts.iter().any(|text|text.contains("Tasks.Read")));
+    assert!(texts.iter().any(|text|text.contains("应用程序（客户端）ID")));
+    assert!(!texts.iter().any(|text|text.contains("client_secret")),"设置不能出现客户端机密字段");
+    h.app.settings.ms_todo_client_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into();
+    h.app.settings.ms_todo_accounts="organizations".into();
+    h.app.settings.ms_todo_tenant_id="11111111-2222-3333-4444-555555555555".into();
+    h.app.settings.save();
+    let loaded=crate::model::Settings::load();
+    assert_eq!(loaded.ms_todo_client_id,"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    assert_eq!(loaded.ms_todo_accounts,"organizations");
+    assert_eq!(loaded.ms_todo_tenant_id,"11111111-2222-3333-4444-555555555555");
+    h.app.todos.items=vec![crate::model::TodoItem::new("本地任务")];
+    h.app.ms_todo.preview(vec![crate::ms_todo::TaskRow{title:"写周报".into(),list:"工作".into(),due:"11-18 09:30".into(),hover:"工作\n进行中\n到期 2026-11-18 09:30".into()}],true);
+    h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);
+    h.click_text("微软 1");
+    assert!(h.app.ms_todo_view);
+    h.frame(vec![]);
+    h.click_text("写周报");
+    h.frame(vec![]);
+    assert!(h.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.text().contains("只读"))),"点击 Microsoft 任务应提示只读");
+    assert!(h.app.todos.items[0].done_on.is_none() && h.app.todos.items.len()==1,"只读点击不能改本机待办");
+    h.click_text("本机");
+    assert!(!h.app.ms_todo_view);
+    h.frame(vec![]);
+    h.click_text("本地任务");
+    assert!(h.app.todos.items[0].done_on.is_some(),"回到本机后仍可完成本机待办");
+}
